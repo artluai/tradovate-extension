@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  
+  body {
+    width: 320px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 13px;
+    background: #1a1a2e;
+    color: #e0e0e0;
+  }
+
+  .header {
+    padding: 14px 16px;
+    background: #16213e;
+    border-bottom: 1px solid #0f3460;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .header h1 {
+    font-size: 14px;
+    font-weight: 600;
+    color: #fff;
+  }
+
+  .toggle-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .toggle-label {
+    font-size: 11px;
+    color: #8a8a9a;
+  }
+
+  .toggle {
+    position: relative;
+    width: 40px;
+    height: 22px;
+    background: #333;
+    border-radius: 11px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .toggle.on { background: #22c55e; }
+
+  .toggle .knob {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 16px;
+    height: 16px;
+    background: white;
+    border-radius: 50%;
+    transition: left 0.2s;
+  }
+
+  .toggle.on .knob { left: 21px; }
+
+  .status-bar {
+    padding: 10px 16px;
+    display: flex;
+    gap: 12px;
+    border-bottom: 1px solid #0f3460;
+    background: #16213e;
+  }
+
+  .stat {
+    text-align: center;
+    flex: 1;
+  }
+
+  .stat-value {
+    font-size: 18px;
+    font-weight: 700;
+    color: #fff;
+  }
+
+  .stat-label {
+    font-size: 10px;
+    color: #8a8a9a;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-top: 2px;
+  }
+
+  .stat-value.green { color: #22c55e; }
+  .stat-value.yellow { color: #eab308; }
+  .stat-value.red { color: #ef4444; }
+
+  .section-label {
+    padding: 8px 16px 4px;
+    font-size: 10px;
+    color: #6a6a7a;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .positions {
+    padding: 4px 16px 8px;
+    min-height: 28px;
+  }
+
+  .positions .empty {
+    color: #6a6a7a;
+    font-style: italic;
+    font-size: 12px;
+    padding: 4px 0;
+  }
+
+  .position-chip {
+    display: inline-block;
+    padding: 3px 8px;
+    margin: 2px 4px 2px 0;
+    background: #0f3460;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #53a7ff;
+  }
+
+  .log-area {
+    padding: 0 16px 12px;
+    max-height: 220px;
+    overflow-y: auto;
+  }
+
+  .log-entry {
+    padding: 4px 0;
+    border-bottom: 1px solid #1e1e3a;
+    font-size: 11px;
+    line-height: 1.4;
+  }
+
+  .log-entry .time {
+    color: #6a6a7a;
+    font-size: 10px;
+  }
+
+  .log-entry.warn { color: #eab308; }
+  .log-entry.error { color: #ef4444; }
+
+  .footer {
+    padding: 8px 16px;
+    text-align: center;
+    font-size: 10px;
+    color: #4a4a5a;
+    border-top: 1px solid #0f3460;
+  }
+
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: #1a1a2e; }
+  ::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Auto-Cancel</h1>
+  <div class="toggle-wrapper">
+    <span class="toggle-label" id="toggleLabel">ON</span>
+    <div class="toggle on" id="toggleBtn">
+      <div class="knob"></div>
+    </div>
+  </div>
+</div>
+
+<div class="status-bar">
+  <div class="stat">
+    <div class="stat-value green" id="statusDot">●</div>
+    <div class="stat-label">Status</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value" id="cancelCountEl">0</div>
+    <div class="stat-label">Cancels</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value" id="wsCountEl">0</div>
+    <div class="stat-label">Checks</div>
+  </div>
+</div>
+
+<div class="section-label">Open Positions</div>
+<div class="positions" id="positionsArea">
+  <div class="empty">No positions detected</div>
+</div>
+
+<div class="section-label">Activity Log</div>
+<div class="log-area" id="logArea">
+  <div class="log-entry" style="color:#6a6a7a">Waiting for data...</div>
+</div>
+
+<div class="footer">
+  Watches your positions · Cancels stale orders · Never places trades
+</div>
+
+<script src="popup.js"></script>
+</body>
+</html>
