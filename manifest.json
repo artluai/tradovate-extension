@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Tradovate Auto-Cancel",
-  "version": "3.0.0",
-  "description": "Automatically cancels leftover orders when a position closes.",
+  "version": "4.0.0",
+  "description": "Automatically cancels leftover orders when a position closes. Includes remote panic button.",
   "permissions": [
     "storage"
   ],
   "host_permissions": [
-    "*://*.tradovate.com/*"
+    "*://*.tradovate.com/*",
+    "https://firestore.googleapis.com/*"
   ],
   "content_scripts": [
     {

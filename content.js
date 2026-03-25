@@ -1,10 +1,10 @@
 /*
- * content.js — Tradovate Auto-Cancel v3 (Simplified)
- * 
- * Dead simple approach:
- * 1. Every second, scan the page text for the POSITION value
- * 2. If position goes from non-zero to zero, click cancel
- * 3. That's it.
+ * content.js — Tradovate Auto-Cancel v4 (with Remote Panic Button)
+ *
+ * Everything from v3, plus:
+ * - Pushes current instrument/contracts to Firestore every 5 seconds
+ * - Polls Firestore for a panic signal every 3 seconds
+ * - When panic signal fires, clicks "Exit at Mkt & Cxl"
  */
 
 (function () {
@@ -19,6 +19,13 @@
   var initialized = false;
   var cooldownUntil = 0;
 
+  // ---- Firebase / Panic Button ----
+  var firebaseConfig = null;
+  var lastPanicCheck = 0;
+  var lastPositionPush = 0;
+  var lastProcessedTimestamp = 0;
+  var panicConnected = false;
+
   // ---- Logging ----
   function log(msg, level) {
     level = level || 'info';
@@ -30,23 +37,144 @@
       chrome.storage.local.set({
         tvac_log: activityLog.slice(0, 20),
         tvac_cancelCount: cancelCount,
-        tvac_enabled: enabled
+        tvac_enabled: enabled,
+        tvac_panicConnected: panicConnected
       });
     } catch (e) {}
   }
 
-  // Load enabled state
+  // Load enabled state and firebase config
   try {
-    chrome.storage.local.get(['tvac_enabled'], function(r) {
+    chrome.storage.local.get(['tvac_enabled', 'tvac_firebase_config'], function (r) {
       if (r && r.tvac_enabled !== undefined) enabled = r.tvac_enabled;
+      if (r && r.tvac_firebase_config) {
+        firebaseConfig = r.tvac_firebase_config;
+        panicConnected = true;
+      }
     });
-    chrome.storage.onChanged.addListener(function(changes) {
+    chrome.storage.onChanged.addListener(function (changes) {
       if (changes.tvac_enabled) {
         enabled = changes.tvac_enabled.newValue;
         log(enabled ? 'Enabled' : 'Disabled');
       }
+      if (changes.tvac_firebase_config) {
+        firebaseConfig = changes.tvac_firebase_config.newValue;
+        panicConnected = !!firebaseConfig;
+        if (panicConnected) log('Firebase config updated');
+      }
     });
   } catch (e) {}
+
+  // ---- Firestore REST helpers ----
+  function firestoreBase() {
+    if (!firebaseConfig || !firebaseConfig.projectId || !firebaseConfig.apiKey) return null;
+    return 'https://firestore.googleapis.com/v1/projects/' +
+      firebaseConfig.projectId +
+      '/databases/(default)/documents/';
+  }
+
+  function firestoreUrl(path) {
+    var base = firestoreBase();
+    if (!base) return null;
+    return base + path + '?key=' + firebaseConfig.apiKey;
+  }
+
+  // ---- Check for remote panic signal ----
+  function checkPanicSignal() {
+    if (!firebaseConfig) return;
+    if (Date.now() - lastPanicCheck < 3000) return;
+    lastPanicCheck = Date.now();
+
+    var url = firestoreUrl('signals/panic');
+    if (!url) return;
+
+    fetch(url)
+      .then(function (r) { return r.json(); })
+      .then(function (doc) {
+        if (!doc.fields) return;
+
+        var triggered = doc.fields.triggered && doc.fields.triggered.booleanValue === true;
+        var target = doc.fields.instrument && doc.fields.instrument.stringValue;
+        var ts = doc.fields.timestamp && (doc.fields.timestamp.integerValue || doc.fields.timestamp.stringValue);
+        ts = parseInt(ts) || 0;
+
+        if (!triggered || ts <= lastProcessedTimestamp) return;
+
+        var currentInstr = findInstrument();
+
+        // Only act if signal targets our instrument or "all"
+        if (target === 'all' || target === currentInstr) {
+          log('REMOTE PANIC — target: ' + target, 'warn');
+
+          var clicked = clickExitButton();
+          if (clicked) {
+            cancelCount++;
+            log('Remote exit executed on ' + (currentInstr || 'unknown'), 'warn');
+          } else {
+            log('Exit button not found (remote panic)', 'error');
+          }
+
+          lastProcessedTimestamp = ts;
+          cooldownUntil = Date.now() + 5000;
+
+          // Reset the signal so it doesn't re-trigger
+          resetPanicSignal();
+        }
+      })
+      .catch(function () {
+        // Silent fail — network hiccup, will retry in 3s
+      });
+  }
+
+  function resetPanicSignal() {
+    var url = firestoreUrl('signals/panic');
+    if (!url) return;
+
+    fetch(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fields: {
+          triggered: { booleanValue: false },
+          instrument: { stringValue: '' },
+          timestamp: { integerValue: '0' }
+        }
+      })
+    }).catch(function () {});
+  }
+
+  // ---- Push position data to Firestore ----
+  function pushPosition() {
+    if (!firebaseConfig) return;
+    if (Date.now() - lastPositionPush < 5000) return;
+    lastPositionPush = Date.now();
+
+    var instr = findInstrument();
+    var pos = findPosition();
+    if (!instr) return;
+
+    var url = firestoreUrl('positions/' + instr);
+    if (!url) return;
+
+    if (pos !== null && pos !== 0) {
+      // Write current position
+      fetch(url, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fields: {
+            instrument: { stringValue: instr },
+            contracts: { integerValue: String(Math.abs(pos)) },
+            direction: { stringValue: pos > 0 ? 'LONG' : 'SHORT' },
+            lastSeen: { integerValue: String(Date.now()) }
+          }
+        })
+      }).catch(function () {});
+    } else {
+      // Position is flat — remove from Firestore
+      fetch(url, { method: 'DELETE' }).catch(function () {});
+    }
+  }
 
   // ---- Find position value on the page ----
   function findPosition() {
@@ -116,17 +244,17 @@
     return false;
   }
 
-  // ---- Check for orders in the Orders panel ----
-  function hasOrdersForInstrument(symbol) {
-    var text = document.body.innerText;
-    var pattern1 = new RegExp(symbol + '[\\s\\S]{0,50}(?:Limit|Stop|Market)', 'i');
-    var pattern2 = new RegExp('(?:Buy|Sell)[\\s\\S]{0,30}' + symbol, 'i');
-    return pattern1.test(text) || pattern2.test(text);
-  }
-
   // ---- Main check ----
   function check() {
     if (!enabled) return;
+
+    // Always check panic signal, even during cooldown
+    checkPanicSignal();
+
+    // Always push position data
+    pushPosition();
+
+    // Skip normal auto-cancel during cooldown
     if (Date.now() < cooldownUntil) return;
 
     var instrument = findInstrument();
@@ -175,21 +303,21 @@
       // Position OPENED
       if ((lastPosition === null || lastPosition === 0) && position !== null && position !== 0) {
         var dir = position > 0 ? 'LONG' : 'SHORT';
-        log('📈 ' + dir + ' ' + Math.abs(position) + ' ' + instrument, 'warn');
+        log(dir + ' ' + Math.abs(position) + ' ' + instrument, 'warn');
       }
 
       // Position CLOSED
       if (lastPosition !== null && lastPosition !== 0 && (position === 0 || position === null)) {
-        log('⚡ CLOSED on ' + instrument + ' (was ' + lastPosition + ')', 'warn');
+        log('CLOSED on ' + instrument + ' (was ' + lastPosition + ')', 'warn');
 
         log('Clicking Exit at Mkt & Cxl...', 'warn');
         var clicked = clickExitButton();
 
         if (clicked) {
           cancelCount++;
-          log('✅ Canceled orders on ' + instrument, 'warn');
+          log('Canceled orders on ' + instrument, 'warn');
         } else {
-          log('⚠️ Exit button not found!', 'error');
+          log('Exit button not found!', 'error');
         }
 
         cooldownUntil = Date.now() + 5000;
@@ -202,7 +330,7 @@
   // ---- Start ----
   log('Loaded on ' + window.location.hostname);
 
-  setTimeout(function() {
+  setTimeout(function () {
     log('Starting monitor...');
     setInterval(check, 1000);
   }, 3000);
